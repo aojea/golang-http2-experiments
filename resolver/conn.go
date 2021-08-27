@@ -8,8 +8,6 @@ import (
 	"os"
 	"sync"
 	"time"
-
-	"golang.org/x/net/dns/dnsmessage"
 )
 
 // connection parameters (copied from net.Pipe)
@@ -156,58 +154,7 @@ func (r *InMemoryDNS) write(b []byte) (n int, err error) {
 		return n, os.ErrDeadlineExceeded
 	default:
 	}
-	// process DNS query
-	var p dnsmessage.Parser
-	hdr, err := p.Start(b)
-	if err != nil {
-		return 0, fmt.Errorf("invalid DNS query:", err)
-	}
-
-	buf := make([]byte, 2, 514)
-	answer := dnsmessage.NewBuilder(buf, hdr)
-	answer.EnableCompression()
-
-	for {
-		q, err := p.Question()
-		fmt.Println("RCV DNS q", q)
-
-		if err == dnsmessage.ErrSectionDone {
-			break
-		}
-		if err != nil {
-			return 0, fmt.Errorf("invalid DNS query:", err)
-		}
-
-		switch q.Type {
-		case dnsmessage.TypeA, dnsmessage.TypeAAAA:
-			_, err = r.lookupAddr(context.Background(), q.Name.String())
-		case dnsmessage.TypeNS:
-			// TODO
-		case dnsmessage.TypeCNAME:
-			// TODO
-		case dnsmessage.TypeSOA:
-			// TODO
-		case dnsmessage.TypePTR:
-			// TODO
-		case dnsmessage.TypeMX:
-			// TODO
-		case dnsmessage.TypeTXT:
-			// TODO
-		case dnsmessage.TypeSRV:
-		// TODO
-		case dnsmessage.TypeOPT:
-			// TODO
-		default:
-		}
-		if err != nil {
-			return 0, fmt.Errorf("invalid DNS query:", err)
-		}
-	}
-	out, err := answer.Finish()
-	if err != nil {
-		return 0, fmt.Errorf("invalid DNS query:", err)
-	}
-	r.readCh <- out
+	go r.processDNSRequest(b)
 	return len(b), nil
 }
 
