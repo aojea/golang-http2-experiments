@@ -77,11 +77,16 @@ func main() {
 		RootCAs:      roots,
 		Certificates: []tls.Certificate{cert},
 	}
-	srv := &http.Server{
+	srv1 := &http.Server{
 		Addr:      ":8443",
 		Handler:   mux,
 		TLSConfig: cfg,
 	}
-	log.Fatal(srv.ListenAndServeTLS("", ""))
-
+	log.Fatal(srv1.ListenAndServeTLS("", ""))
+	srv2 := &http.Server{
+		Addr:      ":9443",
+		Handler:   mux,
+		TLSConfig: cfg,
+	}
+	log.Fatal(srv2.ListenAndServeTLS("", ""))
 }

@@ -6,19 +6,35 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"net"
 	"net/http"
+	"time"
+
+	"github.com/aojea/golang-http2-experiments/resolver"
 )
 
-const url = "https://localhost:8443"
+const url = "https://www.google.es:8443"
 
 var httpVersion = flag.Int("version", 2, "HTTP version")
 
 func main() {
 	flag.Parse()
+
 	tlsConfig := &tls.Config{InsecureSkipVerify: true}
-	tr := http.DefaultTransport
-	tr.(*http.Transport).TLSClientConfig = tlsConfig
-	//tr.(*http.Transport).MaxIdleConnsPerHost = -1
+	tr := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+			Resolver:  resolver.NewInMemoryResolver(nil),
+		}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		TLSClientConfig:       tlsConfig,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
 
 	client := &http.Client{
 		Transport: tr,
@@ -40,6 +56,5 @@ func main() {
 				"Got response %d: %s %s\n",
 				resp.StatusCode, resp.Proto, string(body))
 		}()
-		tr.(*http.Transport).CloseIdleConnections()
 	}
 }
