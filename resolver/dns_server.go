@@ -6,7 +6,7 @@ import (
 	"golang.org/x/net/dns/dnsmessage"
 )
 
-func ProcessDNSRequest(b []byte) []byte {
+func (r *DNSShim) ProcessDNSRequest(b []byte) []byte {
 
 	// process DNS query
 	var p dnsmessage.Parser

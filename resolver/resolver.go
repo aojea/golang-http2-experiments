@@ -23,8 +23,11 @@ type DNSShim struct {
 var defaultResolver = net.DefaultResolver
 
 // NewInMemoryResolver receives a DNSShim object with the override functions
-func NewInMemoryResolver(dialDns *DNSShim) *net.Resolver {
-	localDNSDialer := NewLocalDialer(ProcessDNSRequest)
+func NewInMemoryResolver(d *DNSShim) *net.Resolver {
+	if d == nil {
+		return net.DefaultResolver
+	}
+	localDNSDialer := NewLocalDialer(d.ProcessDNSRequest)
 
 	return &net.Resolver{
 		PreferGo: true,

@@ -26,7 +26,7 @@ func main() {
 		DialContext: (&net.Dialer{
 			Timeout:   30 * time.Second,
 			KeepAlive: 30 * time.Second,
-			Resolver:  resolver.NewInMemoryResolver(nil),
+			Resolver:  resolver.NewInMemoryResolver(&resolver.DNSShim{}),
 		}).DialContext,
 		ForceAttemptHTTP2:     true,
 		MaxIdleConns:          100,
