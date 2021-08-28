@@ -5,9 +5,9 @@ import (
 	"net"
 )
 
-// InMemoryDNS implements PacketConn and allows to override the
-// golang net.DefaultResolver DNS functions
-type InMemoryDNS struct {
+// DNSShim process dns packets and executes the corresponding functions if set
+// otherwise it uses the stdlib DefaultResolver.
+type DNSShim struct {
 	// DNS overrides
 	LookupAddr   func(ctx context.Context, addr string) (names []string, err error)
 	LookupCNAME  func(ctx context.Context, host string) (cname string, err error)
@@ -22,8 +22,8 @@ type InMemoryDNS struct {
 
 var defaultResolver = net.DefaultResolver
 
-// NewInMemoryResolver receives a InMemoryDNS object with the override functions
-func NewInMemoryResolver(dialDns *InMemoryDNS) *net.Resolver {
+// NewInMemoryResolver receives a DNSShim object with the override functions
+func NewInMemoryResolver(dialDns *DNSShim) *net.Resolver {
 	localDNSDialer := NewLocalDialer(ProcessDNSRequest)
 
 	return &net.Resolver{
@@ -32,61 +32,61 @@ func NewInMemoryResolver(dialDns *InMemoryDNS) *net.Resolver {
 	}
 }
 
-func (r *InMemoryDNS) lookupAddr(ctx context.Context, addr string) (names []string, err error) {
+func (r *DNSShim) lookupAddr(ctx context.Context, addr string) (names []string, err error) {
 	if r != nil && r.LookupAddr != nil {
 		return r.LookupAddr(ctx, addr)
 	}
 	return defaultResolver.LookupAddr(ctx, addr)
 }
-func (r *InMemoryDNS) lookupCNAME(ctx context.Context, host string) (cname string, err error) {
+func (r *DNSShim) lookupCNAME(ctx context.Context, host string) (cname string, err error) {
 	if r != nil && r.LookupCNAME != nil {
 		return r.LookupCNAME(ctx, host)
 	}
 	return defaultResolver.LookupCNAME(ctx, host)
 
 }
-func (r *InMemoryDNS) lookupHost(ctx context.Context, host string) (addrs []string, err error) {
+func (r *DNSShim) lookupHost(ctx context.Context, host string) (addrs []string, err error) {
 	if r != nil && r.LookupHost != nil {
 		return r.LookupHost(ctx, host)
 	}
 	return defaultResolver.LookupHost(ctx, host)
 
 }
-func (r *InMemoryDNS) lookupIPAddr(ctx context.Context, host string) ([]net.IPAddr, error) {
+func (r *DNSShim) lookupIPAddr(ctx context.Context, host string) ([]net.IPAddr, error) {
 	if r != nil && r.LookupIPAddr != nil {
 		return r.LookupIPAddr(ctx, host)
 	}
 	return defaultResolver.LookupIPAddr(ctx, host)
 
 }
-func (r *InMemoryDNS) lookupMX(ctx context.Context, name string) ([]*net.MX, error) {
+func (r *DNSShim) lookupMX(ctx context.Context, name string) ([]*net.MX, error) {
 	if r != nil && r.LookupMX != nil {
 		return r.LookupMX(ctx, name)
 	}
 	return defaultResolver.LookupMX(ctx, name)
 
 }
-func (r *InMemoryDNS) lookupNS(ctx context.Context, name string) ([]*net.NS, error) {
+func (r *DNSShim) lookupNS(ctx context.Context, name string) ([]*net.NS, error) {
 	if r != nil && r.LookupNS != nil {
 		return r.LookupNS(ctx, name)
 	}
 	return defaultResolver.LookupNS(ctx, name)
 
 }
-func (r *InMemoryDNS) lookupPort(ctx context.Context, network, service string) (port int, err error) {
+func (r *DNSShim) lookupPort(ctx context.Context, network, service string) (port int, err error) {
 	if r != nil && r.LookupPort != nil {
 		return r.LookupPort(ctx, network, service)
 	}
 	return defaultResolver.LookupPort(ctx, network, service)
 
 }
-func (r *InMemoryDNS) lookupSRV(ctx context.Context, service, proto, name string) (cname string, addrs []*net.SRV, err error) {
+func (r *DNSShim) lookupSRV(ctx context.Context, service, proto, name string) (cname string, addrs []*net.SRV, err error) {
 	if r != nil && r.LookupSRV != nil {
 		return r.LookupSRV(ctx, service, proto, name)
 	}
 	return defaultResolver.LookupSRV(ctx, service, proto, name)
 }
-func (r *InMemoryDNS) lookupTXT(ctx context.Context, name string) ([]string, error) {
+func (r *DNSShim) lookupTXT(ctx context.Context, name string) ([]string, error) {
 	if r != nil && r.LookupTXT != nil {
 		return r.LookupTXT(ctx, name)
 	}
