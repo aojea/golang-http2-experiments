@@ -1,13 +1,12 @@
 package resolver
 
 import (
-	"context"
 	"fmt"
 
 	"golang.org/x/net/dns/dnsmessage"
 )
 
-func (r *InMemoryDNS) processDNSRequest(b []byte) {
+func ProcessDNSRequest(b []byte) []byte {
 
 	// process DNS query
 	var p dnsmessage.Parser
@@ -22,18 +21,20 @@ func (r *InMemoryDNS) processDNSRequest(b []byte) {
 
 	for {
 		q, err := p.Question()
-		fmt.Println("RCV DNS q", q)
+		fmt.Println("DEBUG RCV DNS q", q)
 
 		if err == dnsmessage.ErrSectionDone {
 			break
 		}
 		if err != nil {
 			// return dns error
+			return []byte{}
+
 		}
 
 		switch q.Type {
 		case dnsmessage.TypeA, dnsmessage.TypeAAAA:
-			_, err = r.lookupAddr(context.Background(), q.Name.String())
+			//_, err = r.lookupAddr(context.Background(), q.Name.String())
 		case dnsmessage.TypeNS:
 			// TODO
 		case dnsmessage.TypeCNAME:
@@ -58,7 +59,7 @@ func (r *InMemoryDNS) processDNSRequest(b []byte) {
 	}
 	out, err := answer.Finish()
 	if err != nil {
-		// return dns error
+		return []byte{}
 	}
-	r.readCh <- out
+	return out
 }

@@ -3,21 +3,11 @@ package resolver
 import (
 	"context"
 	"net"
-	"sync"
 )
 
 // InMemoryDNS implements PacketConn and allows to override the
 // golang net.DefaultResolver DNS functions
 type InMemoryDNS struct {
-	// Connection parameters
-	readCh chan []byte
-
-	once sync.Once
-	done chan struct{}
-
-	readDeadline  connDeadline
-	writeDeadline connDeadline
-
 	// DNS overrides
 	LookupAddr   func(ctx context.Context, addr string) (names []string, err error)
 	LookupCNAME  func(ctx context.Context, host string) (cname string, err error)
@@ -30,25 +20,15 @@ type InMemoryDNS struct {
 	LookupTXT    func(ctx context.Context, name string) ([]string, error)
 }
 
-var _ net.PacketConn = &InMemoryDNS{}
-
 var defaultResolver = net.DefaultResolver
 
 // NewInMemoryResolver receives a InMemoryDNS object with the override functions
 func NewInMemoryResolver(dialDns *InMemoryDNS) *net.Resolver {
-	if dialDns == nil {
-		dialDns = &InMemoryDNS{}
-	}
-
-	// Initialize connection
-	dialDns.readCh = make(chan []byte)
-	dialDns.done = make(chan struct{})
-	dialDns.readDeadline = makeConnDeadline()
-	dialDns.writeDeadline = makeConnDeadline()
+	localDNSDialer := NewLocalDialer(ProcessDNSRequest)
 
 	return &net.Resolver{
 		PreferGo: true,
-		Dial:     dialDns.Dial,
+		Dial:     localDNSDialer.Dial,
 	}
 }
 

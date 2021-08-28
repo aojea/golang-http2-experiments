@@ -10,6 +10,36 @@ import (
 	"time"
 )
 
+// LocalDialer creates an in-memory network connection
+// Writes are sent to a custom function that process
+// the packets.
+// Reads read the output of the custom function.
+type LocalDialer struct {
+	readCh chan []byte
+
+	once sync.Once
+	done chan struct{}
+
+	readDeadline  connDeadline
+	writeDeadline connDeadline
+
+	// PacketHandler must be safe to call concurrently
+	PacketHandler func(b []byte) []byte
+}
+
+var _ net.PacketConn = &LocalDialer{}
+
+func NewLocalDialer(fn func(b []byte) []byte) *LocalDialer {
+	return &LocalDialer{
+		readCh:        make(chan []byte),
+		done:          make(chan struct{}),
+		readDeadline:  makeConnDeadline(),
+		writeDeadline: makeConnDeadline(),
+		PacketHandler: fn,
+	}
+
+}
+
 // connection parameters (copied from net.Pipe)
 // https://cs.opensource.google/go/go/+/refs/tags/go1.17:src/net/pipe.go;bpv=0;bpt=1
 
@@ -81,109 +111,116 @@ func isClosedChan(c <-chan struct{}) bool {
 	}
 }
 
-type inMemoryDNSAddress struct{}
+type localDialerAddress struct{}
 
-func (inMemoryDNSAddress) Network() string { return "inMemoryDNS" }
-func (inMemoryDNSAddress) String() string  { return "inMemoryDNS" }
+func (localDialerAddress) Network() string { return "localDialer" }
+func (localDialerAddress) String() string  { return "localDialer" }
 
-// Dial creates an in memory connection
-func (r *InMemoryDNS) Dial(ctx context.Context, network, address string) (net.Conn, error) {
-	// InMemoryDNS implements net.Conn interface
-	return r, nil
+// Dial creates an in memory connection that is processed by the packet handler
+func (l *LocalDialer) Dial(ctx context.Context, network, address string) (net.Conn, error) {
+	// localDialer implements net.Conn interface
+	return l, nil
 }
 
-func (r *InMemoryDNS) LocalAddr() net.Addr  { return inMemoryDNSAddress{} }
-func (r *InMemoryDNS) RemoteAddr() net.Addr { return inMemoryDNSAddress{} }
+func (l *LocalDialer) LocalAddr() net.Addr  { return localDialerAddress{} }
+func (l *LocalDialer) RemoteAddr() net.Addr { return localDialerAddress{} }
 
-func (r *InMemoryDNS) Read(b []byte) (int, error) {
-	n, _, err := r.ReadFrom(b)
+func (l *LocalDialer) Read(b []byte) (int, error) {
+	n, _, err := l.ReadFrom(b)
 	return n, err
 }
-func (r *InMemoryDNS) ReadFrom(b []byte) (int, net.Addr, error) {
-	n, err := r.read(b)
+func (l *LocalDialer) ReadFrom(b []byte) (int, net.Addr, error) {
+	n, err := l.read(b)
 	if err != nil && err != io.EOF && err != io.ErrClosedPipe {
-		err = &net.OpError{Op: "read", Net: "inMemoryDNS", Err: err}
+		err = &net.OpError{Op: "read", Net: "localDialer", Err: err}
 	}
-	return n, inMemoryDNSAddress{}, err
+	return n, localDialerAddress{}, err
 }
 
-func (r *InMemoryDNS) read(b []byte) (n int, err error) {
+func (l *LocalDialer) read(b []byte) (n int, err error) {
 	switch {
-	case isClosedChan(r.done):
+	case isClosedChan(l.done):
 		return 0, io.ErrClosedPipe
-	case isClosedChan(r.readDeadline.wait()):
+	case isClosedChan(l.readDeadline.wait()):
 		return 0, os.ErrDeadlineExceeded
 	}
 
 	select {
-	case bw := <-r.readCh:
+	case bw := <-l.readCh:
 		nr := copy(b, bw)
 		fmt.Println("READ bytes", bw)
 		return nr, nil
-	case <-r.done:
+	case <-l.done:
 		return 0, io.EOF
-	case <-r.readDeadline.wait():
+	case <-l.readDeadline.wait():
 		return 0, os.ErrDeadlineExceeded
 	}
 }
 
-func (r *InMemoryDNS) Write(b []byte) (int, error) {
-	return r.WriteTo(b, inMemoryDNSAddress{})
+func (l *LocalDialer) Write(b []byte) (int, error) {
+	return l.WriteTo(b, localDialerAddress{})
 }
 
-func (r *InMemoryDNS) WriteTo(b []byte, _ net.Addr) (int, error) {
-	n, err := r.write(b)
+func (l *LocalDialer) WriteTo(b []byte, _ net.Addr) (int, error) {
+	n, err := l.write(b)
 	if err != nil && err != io.ErrClosedPipe {
-		err = &net.OpError{Op: "write", Net: "inMemoryDNS", Err: err}
+		err = &net.OpError{Op: "write", Net: "localDialer", Err: err}
 	}
 	return n, err
 }
 
-func (r *InMemoryDNS) write(b []byte) (n int, err error) {
+func (l *LocalDialer) write(b []byte) (n int, err error) {
 	switch {
-	case isClosedChan(r.done):
+	case isClosedChan(l.done):
 		return 0, io.ErrClosedPipe
-	case isClosedChan(r.writeDeadline.wait()):
+	case isClosedChan(l.writeDeadline.wait()):
 		return 0, os.ErrDeadlineExceeded
+	case l.PacketHandler == nil:
+		return n, io.ErrClosedPipe
 	}
 
 	select {
-	case <-r.done:
+	case <-l.done:
 		return n, io.ErrClosedPipe
-	case <-r.writeDeadline.wait():
+	case <-l.writeDeadline.wait():
 		return n, os.ErrDeadlineExceeded
 	default:
 	}
-	go r.processDNSRequest(b)
+
+	// TODO bound this and allow to timeout
+	go func() {
+		l.readCh <- l.PacketHandler(b)
+	}()
+
 	return len(b), nil
 }
 
-func (r *InMemoryDNS) SetDeadline(t time.Time) error {
-	if isClosedChan(r.done) {
+func (l *LocalDialer) SetDeadline(t time.Time) error {
+	if isClosedChan(l.done) {
 		return io.ErrClosedPipe
 	}
-	r.readDeadline.set(t)
-	r.writeDeadline.set(t)
+	l.readDeadline.set(t)
+	l.writeDeadline.set(t)
 	return nil
 }
 
-func (r *InMemoryDNS) SetReadDeadline(t time.Time) error {
-	if isClosedChan(r.done) {
+func (l *LocalDialer) SetReadDeadline(t time.Time) error {
+	if isClosedChan(l.done) {
 		return io.ErrClosedPipe
 	}
-	r.readDeadline.set(t)
+	l.readDeadline.set(t)
 	return nil
 }
 
-func (r *InMemoryDNS) SetWriteDeadline(t time.Time) error {
-	if isClosedChan(r.done) {
+func (l *LocalDialer) SetWriteDeadline(t time.Time) error {
+	if isClosedChan(l.done) {
 		return io.ErrClosedPipe
 	}
-	r.writeDeadline.set(t)
+	l.writeDeadline.set(t)
 	return nil
 }
 
-func (r *InMemoryDNS) Close() error {
-	r.once.Do(func() { close(r.done) })
+func (l *LocalDialer) Close() error {
+	l.once.Do(func() { close(l.done) })
 	return nil
 }
