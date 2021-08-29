@@ -299,7 +299,9 @@ func (m *MemoryListener) Close() error {
 }
 
 func (m *MemoryListener) Addr() net.Addr {
-	return MemoryConnAddress{}
+	return MemoryConnAddress{
+		addr: m.address,
+	}
 }
 
 func (m *MemoryListener) Listen(network, address string) (net.Listener, error) {
