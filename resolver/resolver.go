@@ -27,7 +27,9 @@ func NewInMemoryResolver(d *DNSShim) *net.Resolver {
 	if d == nil {
 		return net.DefaultResolver
 	}
-	localDNSDialer := NewLocalDialer(d.ProcessDNSRequest)
+	localDNSDialer := &MemoryDialer{
+		PacketHandler: d.ProcessDNSRequest,
+	}
 
 	return &net.Resolver{
 		PreferGo: true,

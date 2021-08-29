@@ -10,11 +10,11 @@ import (
 	"time"
 )
 
-// LocalDialer creates an in-memory network connection
+// MemoryConn creates an in-memory network connection
 // Writes are sent to a custom function that process
 // the packets.
 // Reads read the output of the custom function.
-type LocalDialer struct {
+type MemoryConn struct {
 	readCh chan []byte
 
 	once sync.Once
@@ -27,10 +27,10 @@ type LocalDialer struct {
 	PacketHandler func(b []byte) []byte
 }
 
-var _ net.PacketConn = &LocalDialer{}
+var _ net.PacketConn = &MemoryConn{}
 
-func NewLocalDialer(fn func(b []byte) []byte) *LocalDialer {
-	return &LocalDialer{
+func NewMemoryConn(fn func(b []byte) []byte) *MemoryConn {
+	return &MemoryConn{
 		readCh:        make(chan []byte),
 		done:          make(chan struct{}),
 		readDeadline:  makeConnDeadline(),
@@ -111,33 +111,27 @@ func isClosedChan(c <-chan struct{}) bool {
 	}
 }
 
-type localDialerAddress struct{}
+type MemoryConnAddress struct{}
 
-func (localDialerAddress) Network() string { return "localDialer" }
-func (localDialerAddress) String() string  { return "localDialer" }
+func (MemoryConnAddress) Network() string { return "MemoryConn" }
+func (MemoryConnAddress) String() string  { return "MemoryConn" }
 
-// Dial creates an in memory connection that is processed by the packet handler
-func (l *LocalDialer) Dial(ctx context.Context, network, address string) (net.Conn, error) {
-	// localDialer implements net.Conn interface
-	return l, nil
-}
+func (l *MemoryConn) LocalAddr() net.Addr  { return MemoryConnAddress{} }
+func (l *MemoryConn) RemoteAddr() net.Addr { return MemoryConnAddress{} }
 
-func (l *LocalDialer) LocalAddr() net.Addr  { return localDialerAddress{} }
-func (l *LocalDialer) RemoteAddr() net.Addr { return localDialerAddress{} }
-
-func (l *LocalDialer) Read(b []byte) (int, error) {
+func (l *MemoryConn) Read(b []byte) (int, error) {
 	n, _, err := l.ReadFrom(b)
 	return n, err
 }
-func (l *LocalDialer) ReadFrom(b []byte) (int, net.Addr, error) {
+func (l *MemoryConn) ReadFrom(b []byte) (int, net.Addr, error) {
 	n, err := l.read(b)
 	if err != nil && err != io.EOF && err != io.ErrClosedPipe {
-		err = &net.OpError{Op: "read", Net: "localDialer", Err: err}
+		err = &net.OpError{Op: "read", Net: "MemoryConn", Err: err}
 	}
-	return n, localDialerAddress{}, err
+	return n, MemoryConnAddress{}, err
 }
 
-func (l *LocalDialer) read(b []byte) (n int, err error) {
+func (l *MemoryConn) read(b []byte) (n int, err error) {
 	switch {
 	case isClosedChan(l.done):
 		return 0, io.ErrClosedPipe
@@ -157,19 +151,19 @@ func (l *LocalDialer) read(b []byte) (n int, err error) {
 	}
 }
 
-func (l *LocalDialer) Write(b []byte) (int, error) {
-	return l.WriteTo(b, localDialerAddress{})
+func (l *MemoryConn) Write(b []byte) (int, error) {
+	return l.WriteTo(b, MemoryConnAddress{})
 }
 
-func (l *LocalDialer) WriteTo(b []byte, _ net.Addr) (int, error) {
+func (l *MemoryConn) WriteTo(b []byte, _ net.Addr) (int, error) {
 	n, err := l.write(b)
 	if err != nil && err != io.ErrClosedPipe {
-		err = &net.OpError{Op: "write", Net: "localDialer", Err: err}
+		err = &net.OpError{Op: "write", Net: "MemoryConn", Err: err}
 	}
 	return n, err
 }
 
-func (l *LocalDialer) write(b []byte) (n int, err error) {
+func (l *MemoryConn) write(b []byte) (n int, err error) {
 	switch {
 	case isClosedChan(l.done):
 		return 0, io.ErrClosedPipe
@@ -195,7 +189,7 @@ func (l *LocalDialer) write(b []byte) (n int, err error) {
 	return len(b), nil
 }
 
-func (l *LocalDialer) SetDeadline(t time.Time) error {
+func (l *MemoryConn) SetDeadline(t time.Time) error {
 	if isClosedChan(l.done) {
 		return io.ErrClosedPipe
 	}
@@ -204,7 +198,7 @@ func (l *LocalDialer) SetDeadline(t time.Time) error {
 	return nil
 }
 
-func (l *LocalDialer) SetReadDeadline(t time.Time) error {
+func (l *MemoryConn) SetReadDeadline(t time.Time) error {
 	if isClosedChan(l.done) {
 		return io.ErrClosedPipe
 	}
@@ -212,7 +206,7 @@ func (l *LocalDialer) SetReadDeadline(t time.Time) error {
 	return nil
 }
 
-func (l *LocalDialer) SetWriteDeadline(t time.Time) error {
+func (l *MemoryConn) SetWriteDeadline(t time.Time) error {
 	if isClosedChan(l.done) {
 		return io.ErrClosedPipe
 	}
@@ -220,7 +214,46 @@ func (l *LocalDialer) SetWriteDeadline(t time.Time) error {
 	return nil
 }
 
-func (l *LocalDialer) Close() error {
+func (l *MemoryConn) Close() error {
 	l.once.Do(func() { close(l.done) })
 	return nil
+}
+
+// Dialer
+type MemoryDialer struct {
+	// PacketHandler must be safe to call concurrently
+	PacketHandler func(b []byte) []byte
+}
+
+// Dial creates an in memory connection that is processed by the packet handler
+func (m *MemoryDialer) Dial(ctx context.Context, network, address string) (net.Conn, error) {
+	// MemoryConn implements net.Conn interface
+	return NewMemoryConn(m.PacketHandler), nil
+}
+
+// Listener
+type MemoryListener struct {
+	connPool      []net.Conn
+	PacketHandler func(b []byte) []byte
+}
+
+var _ net.Listener = &MemoryListener{}
+
+func (m *MemoryListener) Accept() (net.Conn, error) {
+	// MemoryConn implements net.Conn interface
+	return NewMemoryConn(m.PacketHandler), nil
+}
+
+func (m *MemoryListener) Close() error {
+	var aggError error
+	for _, c := range m.connPool {
+		if err := c.Close(); err != nil {
+			aggError = fmt.Errorf("%w", err)
+		}
+	}
+	return aggError
+}
+
+func (m *MemoryListener) Addr() net.Addr {
+	return MemoryConnAddress{}
 }
