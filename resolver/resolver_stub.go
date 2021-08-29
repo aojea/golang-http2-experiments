@@ -38,93 +38,142 @@ func NewInMemoryResolver(d *ResolverStub) *net.Resolver {
 
 // ProcessDNSRequest is used by the MemoryConn to process the packets
 // Transform a DNS request to the corresponding Golang Lookup function
-// DNS https://courses.cs.duke.edu//fall16/compsci356/DNS/DNS-primer.pdf
 func (r *ResolverStub) ProcessDNSRequest(b []byte) []byte {
 	// process DNS query
 	var p dnsmessage.Parser
 	hdr, err := p.Start(b)
 	if err != nil {
-		buf, err := msgFormatError.Pack()
-		if err != nil {
-			panic(err)
-		}
-		return buf
+		return dnsErrorMessage(dnsmessage.RCodeFormatError)
 	}
 
+	// Only support 1 question, the code in dnsmessage says
+	// https://cs.opensource.google/go/x/net/+/e898025e:dns/dnsmessage/message.go
+	// Multiple questions are valid according to the spec,
+	// but servers don't actually support them. There will
+	// be at most one question here.
+	questions, err := p.AllQuestions()
+	if err != nil {
+		return dnsErrorMessage(dnsmessage.RCodeFormatError)
+	}
+	if len(questions) > 1 {
+		return dnsErrorMessage(dnsmessage.RCodeNotImplemented)
+	} else if len(questions) == 0 {
+		return dnsErrorMessage(dnsmessage.RCodeFormatError)
+	}
+	q := questions[0]
+	fmt.Println("DEBUG RCV DNS q", q)
+
+	// Create the answer
 	buf := make([]byte, 2, 514)
-	answer := dnsmessage.NewBuilder(buf, hdr)
+	answer := dnsmessage.NewBuilder(buf,
+		dnsmessage.Header{
+			ID:            hdr.ID,
+			Response:      true,
+			Authoritative: true,
+		})
 	answer.EnableCompression()
 
-	for {
-		q, err := p.Question()
-		fmt.Println("DEBUG RCV DNS q", q)
-
-		if err == dnsmessage.ErrSectionDone {
-			break
-		}
-		if err != nil {
-			buf, err := msgFormatError.Pack()
-			if err != nil {
-				panic(err)
-			}
-			return buf
-		}
-
-		switch q.Type {
-		case dnsmessage.TypeA, dnsmessage.TypeAAAA:
-			if r.LookupIPAddr == nil {
-				buf, err := msgNotImplemented.Pack()
-				if err != nil {
-					panic(err)
-				}
-				return buf
-			}
-			// addrs, err := r.lookupIPAddr(context.Background(), q.Name.String())
-			// if err != nil {
-
-			//}
-		case dnsmessage.TypeNS:
-			// TODO
-		case dnsmessage.TypeCNAME:
-			// TODO
-		case dnsmessage.TypeSOA:
-			// TODO
-		case dnsmessage.TypePTR:
-			// TODO
-		case dnsmessage.TypeMX:
-			// TODO
-		case dnsmessage.TypeTXT:
-			// TODO
-		case dnsmessage.TypeSRV:
-		// TODO
-		case dnsmessage.TypeOPT:
-			// TODO
-		default:
-		}
-		if err != nil {
-			// return dns error
-		}
-	}
-	out, err := answer.Finish()
+	err = answer.StartQuestions()
 	if err != nil {
-		return []byte{}
+		return dnsErrorMessage(dnsmessage.RCodeServerFailure)
 	}
-	return out
+	answer.Question(q)
+
+	err = answer.StartAnswers()
+	if err != nil {
+		return dnsErrorMessage(dnsmessage.RCodeServerFailure)
+	}
+	switch q.Type {
+	case dnsmessage.TypeA, dnsmessage.TypeAAAA:
+		if r.LookupIPAddr == nil {
+			return dnsErrorMessage(dnsmessage.RCodeNotImplemented)
+		}
+		addrs, err := r.LookupIPAddr(context.Background(), q.Name.String())
+		if err != nil {
+			return dnsErrorMessage(dnsmessage.RCodeServerFailure)
+		}
+		fmt.Println("DEBUGaddre", addrs)
+		err = answer.AResource(
+			dnsmessage.ResourceHeader{
+				Name:  q.Name,
+				Class: q.Class,
+				TTL:   86400,
+			},
+			dnsmessage.AResource{
+				A: [4]byte{127, 0, 0, 1},
+			},
+		)
+		if err != nil {
+			fmt.Println("DEBUG err", err)
+			return dnsErrorMessage(dnsmessage.RCodeServerFailure)
+		}
+		err = answer.AAAAResource(
+			dnsmessage.ResourceHeader{
+				Name:  q.Name,
+				Class: q.Class,
+				TTL:   86400,
+			},
+			dnsmessage.AAAAResource{
+				AAAA: [16]byte{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1},
+			},
+		)
+		if err != nil {
+			fmt.Println("DEBUG err", err)
+			return dnsErrorMessage(dnsmessage.RCodeServerFailure)
+		}
+	case dnsmessage.TypeNS:
+		if r.LookupNS == nil {
+			return dnsErrorMessage(dnsmessage.RCodeNotImplemented)
+		}
+	case dnsmessage.TypeCNAME:
+		if r.LookupCNAME == nil {
+			return dnsErrorMessage(dnsmessage.RCodeNotImplemented)
+		}
+	case dnsmessage.TypeSOA:
+		return dnsErrorMessage(dnsmessage.RCodeNotImplemented)
+	case dnsmessage.TypePTR:
+		if r.LookupAddr == nil {
+			return dnsErrorMessage(dnsmessage.RCodeNotImplemented)
+		}
+	case dnsmessage.TypeMX:
+		if r.LookupMX == nil {
+			return dnsErrorMessage(dnsmessage.RCodeNotImplemented)
+		}
+	case dnsmessage.TypeTXT:
+		if r.LookupTXT == nil {
+			return dnsErrorMessage(dnsmessage.RCodeNotImplemented)
+		}
+	case dnsmessage.TypeSRV:
+		if r.LookupSRV == nil {
+			return dnsErrorMessage(dnsmessage.RCodeNotImplemented)
+		}
+	case dnsmessage.TypeOPT:
+		return dnsErrorMessage(dnsmessage.RCodeNotImplemented)
+	default:
+		return dnsErrorMessage(dnsmessage.RCodeNotImplemented)
+	}
+	if err != nil {
+		// return dns error
+	}
+	buf, err = answer.Finish()
+	if err != nil {
+		return dnsErrorMessage(dnsmessage.RCodeServerFailure)
+	}
+	return buf[2:]
 }
 
-var (
-	msgFormatError = dnsmessage.Message{
+// dnsErrorMessage return an encoded dns error message
+func dnsErrorMessage(rcode dnsmessage.RCode) []byte {
+	msg := dnsmessage.Message{
 		Header: dnsmessage.Header{
 			Response:      true,
 			Authoritative: true,
-			RCode:         dnsmessage.RCodeFormatError,
+			RCode:         rcode,
 		},
 	}
-	msgNotImplemented = dnsmessage.Message{
-		Header: dnsmessage.Header{
-			Response:      true,
-			Authoritative: true,
-			RCode:         dnsmessage.RCodeNotImplemented,
-		},
+	buf, err := msg.Pack()
+	if err != nil {
+		panic(err)
 	}
-)
+	return buf
+}
