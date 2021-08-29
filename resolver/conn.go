@@ -176,7 +176,6 @@ func (l *MemoryConn) read(b []byte) (n int, err error) {
 	select {
 	case bw := <-l.readCh:
 		nr := copy(b, bw)
-		fmt.Println("READ bytes", bw)
 		return nr, nil
 	case <-l.done:
 		return 0, io.EOF
