@@ -10,15 +10,15 @@ import (
 
 // ResolverStub process dns packets and executes the corresponding functions if set
 type ResolverStub struct {
-	LookupAddr   func(ctx context.Context, addr string) (names []string, err error)
-	LookupCNAME  func(ctx context.Context, host string) (cname string, err error)
-	LookupHost   func(ctx context.Context, host string) (addrs []string, err error)
-	LookupIPAddr func(ctx context.Context, host string) ([]net.IPAddr, error)
-	LookupMX     func(ctx context.Context, name string) ([]*net.MX, error)
-	LookupNS     func(ctx context.Context, name string) ([]*net.NS, error)
-	LookupPort   func(ctx context.Context, network, service string) (port int, err error)
-	LookupSRV    func(ctx context.Context, service, proto, name string) (cname string, addrs []*net.SRV, err error)
-	LookupTXT    func(ctx context.Context, name string) ([]string, error)
+	LookupAddr  func(ctx context.Context, addr string) (names []string, err error)
+	LookupCNAME func(ctx context.Context, host string) (cname string, err error)
+	LookupHost  func(ctx context.Context, host string) (addrs []string, err error)
+	LookupIP    func(ctx context.Context, network, host string) ([]net.IP, error)
+	LookupMX    func(ctx context.Context, name string) ([]*net.MX, error)
+	LookupNS    func(ctx context.Context, name string) ([]*net.NS, error)
+	LookupPort  func(ctx context.Context, network, service string) (port int, err error)
+	LookupSRV   func(ctx context.Context, service, proto, name string) (cname string, addrs []*net.SRV, err error)
+	LookupTXT   func(ctx context.Context, name string) ([]string, error)
 }
 
 // NewInMemoryResolver receives a ResolverStub object with the override functions
@@ -84,43 +84,65 @@ func (r *ResolverStub) ProcessDNSRequest(b []byte) []byte {
 		return dnsErrorMessage(dnsmessage.RCodeServerFailure)
 	}
 	switch q.Type {
-	case dnsmessage.TypeA, dnsmessage.TypeAAAA:
-		if r.LookupIPAddr == nil {
+	case dnsmessage.TypeA:
+		if r.LookupIP == nil {
 			return dnsErrorMessage(dnsmessage.RCodeNotImplemented)
 		}
-		addrs, err := r.LookupIPAddr(context.Background(), q.Name.String())
+		addrs, err := r.LookupIP(context.Background(), "ip4", q.Name.String())
 		if err != nil {
 			return dnsErrorMessage(dnsmessage.RCodeServerFailure)
 		}
-		fmt.Println("DEBUGaddre", addrs)
-		err = answer.AResource(
-			dnsmessage.ResourceHeader{
-				Name:  q.Name,
-				Class: q.Class,
-				TTL:   86400,
-			},
-			dnsmessage.AResource{
-				A: [4]byte{127, 0, 0, 1},
-			},
-		)
+
+		for _, ip := range addrs {
+			a := ip.To4()
+			if a == nil {
+				continue
+			}
+			err = answer.AResource(
+				dnsmessage.ResourceHeader{
+					Name:  q.Name,
+					Class: q.Class,
+					TTL:   86400,
+				},
+				dnsmessage.AResource{
+					A: [4]byte{a[0], a[1], a[2], a[3]},
+				},
+			)
+			if err != nil {
+				return dnsErrorMessage(dnsmessage.RCodeServerFailure)
+			}
+		}
+
+	case dnsmessage.TypeAAAA:
+		if r.LookupIP == nil {
+			return dnsErrorMessage(dnsmessage.RCodeNotImplemented)
+		}
+		addrs, err := r.LookupIP(context.Background(), "ip6", q.Name.String())
 		if err != nil {
-			fmt.Println("DEBUG err", err)
 			return dnsErrorMessage(dnsmessage.RCodeServerFailure)
 		}
-		err = answer.AAAAResource(
-			dnsmessage.ResourceHeader{
-				Name:  q.Name,
-				Class: q.Class,
-				TTL:   86400,
-			},
-			dnsmessage.AAAAResource{
-				AAAA: [16]byte{1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1},
-			},
-		)
-		if err != nil {
-			fmt.Println("DEBUG err", err)
-			return dnsErrorMessage(dnsmessage.RCodeServerFailure)
+
+		for _, ip := range addrs {
+			if ip.To16() == nil || ip.To4() != nil {
+				continue
+			}
+			var aaaa [16]byte
+			copy(aaaa[:], ip.To16())
+			err = answer.AAAAResource(
+				dnsmessage.ResourceHeader{
+					Name:  q.Name,
+					Class: q.Class,
+					TTL:   86400,
+				},
+				dnsmessage.AAAAResource{
+					AAAA: aaaa,
+				},
+			)
+			if err != nil {
+				return dnsErrorMessage(dnsmessage.RCodeServerFailure)
+			}
 		}
+
 	case dnsmessage.TypeNS:
 		if r.LookupNS == nil {
 			return dnsErrorMessage(dnsmessage.RCodeNotImplemented)

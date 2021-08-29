@@ -27,7 +27,7 @@ func main() {
 			Timeout:   30 * time.Second,
 			KeepAlive: 30 * time.Second,
 			Resolver: resolver.NewInMemoryResolver(&resolver.ResolverStub{
-				LookupIPAddr: net.DefaultResolver.LookupIPAddr,
+				LookupIP: net.DefaultResolver.LookupIP,
 			}),
 		}).DialContext,
 		ForceAttemptHTTP2:     true,
