@@ -23,6 +23,9 @@ type MemoryConn struct {
 	readDeadline  connDeadline
 	writeDeadline connDeadline
 
+	localAddr  net.Addr
+	remoteAddr net.Addr
+
 	// PacketHandler must be safe to call concurrently
 	PacketHandler func(b []byte) []byte
 }
@@ -111,13 +114,42 @@ func isClosedChan(c <-chan struct{}) bool {
 	}
 }
 
-type MemoryConnAddress struct{}
+type MemoryConnAddress struct {
+	addr string
+}
 
-func (MemoryConnAddress) Network() string { return "MemoryConn" }
-func (MemoryConnAddress) String() string  { return "MemoryConn" }
+func (m MemoryConnAddress) Network() string {
+	if m.addr != "" {
+		return m.addr
+	}
+	return "MemoryConn"
+}
+func (m MemoryConnAddress) String() string {
+	if m.addr != "" {
+		return m.addr
+	}
+	return "MemoryConn"
+}
 
-func (l *MemoryConn) LocalAddr() net.Addr  { return MemoryConnAddress{} }
-func (l *MemoryConn) RemoteAddr() net.Addr { return MemoryConnAddress{} }
+func (l *MemoryConn) SetLocalAddr(addr net.Addr) {
+	l.localAddr = addr
+}
+func (l *MemoryConn) SetRemoteAddr(addr net.Addr) {
+	l.remoteAddr = addr
+}
+
+func (l *MemoryConn) LocalAddr() net.Addr {
+	if l.localAddr != nil {
+		return l.localAddr
+	}
+	return MemoryConnAddress{}
+}
+func (l *MemoryConn) RemoteAddr() net.Addr {
+	if l.remoteAddr != nil {
+		return l.remoteAddr
+	}
+	return MemoryConnAddress{}
+}
 
 func (l *MemoryConn) Read(b []byte) (int, error) {
 	n, _, err := l.ReadFrom(b)
@@ -228,12 +260,18 @@ type MemoryDialer struct {
 // Dial creates an in memory connection that is processed by the packet handler
 func (m *MemoryDialer) Dial(ctx context.Context, network, address string) (net.Conn, error) {
 	// MemoryConn implements net.Conn interface
-	return NewMemoryConn(m.PacketHandler), nil
+	conn := NewMemoryConn(m.PacketHandler)
+	conn.SetRemoteAddr(MemoryConnAddress{
+		addr: address,
+	})
+	return conn, nil
 }
 
 // Listener
 type MemoryListener struct {
-	connPool      []net.Conn
+	connPool []net.Conn
+	address  string
+
 	PacketHandler func(b []byte) []byte
 }
 
@@ -241,7 +279,11 @@ var _ net.Listener = &MemoryListener{}
 
 func (m *MemoryListener) Accept() (net.Conn, error) {
 	// MemoryConn implements net.Conn interface
-	return NewMemoryConn(m.PacketHandler), nil
+	conn := NewMemoryConn(m.PacketHandler)
+	conn.SetLocalAddr(MemoryConnAddress{
+		addr: m.address,
+	})
+	return conn, nil
 }
 
 func (m *MemoryListener) Close() error {
@@ -256,4 +298,9 @@ func (m *MemoryListener) Close() error {
 
 func (m *MemoryListener) Addr() net.Addr {
 	return MemoryConnAddress{}
+}
+
+func (m *MemoryListener) Listen(network, address string) (net.Listener, error) {
+	m.address = address
+	return m, nil
 }
