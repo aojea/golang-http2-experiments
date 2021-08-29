@@ -10,6 +10,8 @@ import (
 	"time"
 )
 
+type packetHandlerFn func(b []byte) []byte
+
 // MemoryConn creates an in-memory network connection
 // Writes are sent to a custom function that process
 // the packets.
@@ -27,12 +29,12 @@ type MemoryConn struct {
 	remoteAddr net.Addr
 
 	// PacketHandler must be safe to call concurrently
-	PacketHandler func(b []byte) []byte
+	PacketHandler packetHandlerFn
 }
 
 var _ net.PacketConn = &MemoryConn{}
 
-func NewMemoryConn(fn func(b []byte) []byte) *MemoryConn {
+func NewMemoryConn(fn packetHandlerFn) *MemoryConn {
 	return &MemoryConn{
 		readCh:        make(chan []byte),
 		done:          make(chan struct{}),
@@ -254,7 +256,7 @@ func (l *MemoryConn) Close() error {
 // Dialer
 type MemoryDialer struct {
 	// PacketHandler must be safe to call concurrently
-	PacketHandler func(b []byte) []byte
+	PacketHandler packetHandlerFn
 }
 
 // Dial creates an in memory connection that is processed by the packet handler
@@ -272,7 +274,7 @@ type MemoryListener struct {
 	connPool []net.Conn
 	address  string
 
-	PacketHandler func(b []byte) []byte
+	PacketHandler packetHandlerFn
 }
 
 var _ net.Listener = &MemoryListener{}
