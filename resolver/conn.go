@@ -10,6 +10,8 @@ import (
 	"time"
 )
 
+const maxPacket = 1024
+
 // packetHandlerFn defines the function used by the connection
 type packetHandlerFn func(b []byte) []byte
 
@@ -38,7 +40,7 @@ var _ net.PacketConn = &MemoryConn{}
 
 func NewMemoryConn(fn packetHandlerFn) *MemoryConn {
 	return &MemoryConn{
-		readCh:        make(chan []byte),
+		readCh:        make(chan []byte, maxPacket),
 		done:          make(chan struct{}),
 		readDeadline:  makeConnDeadline(),
 		writeDeadline: makeConnDeadline(),
@@ -176,7 +178,10 @@ func (l *MemoryConn) read(b []byte) (n int, err error) {
 	}
 
 	select {
-	case bw := <-l.readCh:
+	case bw, ok := <-l.readCh:
+		if !ok {
+			return 0, io.EOF
+		}
 		nr := copy(b, bw)
 		return nr, nil
 	case <-l.done:
@@ -199,6 +204,9 @@ func (l *MemoryConn) WriteTo(b []byte, _ net.Addr) (int, error) {
 }
 
 func (l *MemoryConn) write(b []byte) (n int, err error) {
+	if len(b) > maxPacket {
+		return 0, io.ErrShortWrite
+	}
 	switch {
 	case isClosedChan(l.done):
 		return 0, io.ErrClosedPipe
@@ -222,7 +230,11 @@ func (l *MemoryConn) write(b []byte) (n int, err error) {
 	// avoid mutation of the input
 	c := make([]byte, len(b))
 	copy(c, b)
-	l.readCh <- l.PacketHandler(c)
+	d := l.PacketHandler(c)
+	if len(d) > maxPacket {
+		return 0, io.ErrShortWrite
+	}
+	l.readCh <- d
 
 	return len(b), nil
 }
