@@ -8,7 +8,6 @@ package resolver
 import (
 	"bytes"
 	"encoding/binary"
-	"fmt"
 	"io"
 	"io/ioutil"
 	"math/rand"
@@ -26,7 +25,11 @@ var (
 
 // TestBasicIO tests that the data sent on c is properly received back on c.
 func TestBasicIO(t *testing.T) {
+	finish := false
 	ph := func(b []byte) []byte {
+		if finish {
+			return nil
+		}
 		return b
 	}
 	c := NewMemoryConn(ph)
@@ -39,6 +42,7 @@ func TestBasicIO(t *testing.T) {
 		if err := chunkedCopy(c, rd); err != nil {
 			t.Errorf("unexpected buffer Write error: %v", err)
 		}
+		finish = true
 	}()
 
 	go func() {
@@ -73,10 +77,6 @@ func TestPingPong(t *testing.T) {
 			t.Errorf("mismatching value: got %d, want %d", v, prev+2)
 		}
 		prev = v
-		fmt.Println("debug ping", v)
-		if v == 1000 {
-			return []byte{}
-		}
 		return buf
 	}
 	c := NewMemoryConn(ph)
@@ -102,9 +102,8 @@ func TestPingPong(t *testing.T) {
 				t.Errorf("mismatching value: got %d, want %d", v, prev+2)
 			}
 			prev = v
-			fmt.Println("debug pong", v)
 
-			if v == 1000 {
+			if v == 1001 {
 				break
 			}
 
@@ -159,9 +158,13 @@ func TestRacyRead(t *testing.T) {
 	}
 }
 
-// testRacyWrite tests that it is safe to mutate the input Write buffer
+// TestRacyWrite tests that it is safe to mutate the input Write buffer
 // immediately after cancelation has occurred.
-func testRacyWrite(t *testing.T, c net.Conn) {
+func TestRacyWrite(t *testing.T) {
+	ph := func(b []byte) []byte {
+		return b
+	}
+	c := NewMemoryConn(ph)
 	go chunkedCopy(ioutil.Discard, c)
 
 	var wg sync.WaitGroup
@@ -188,7 +191,11 @@ func testRacyWrite(t *testing.T, c net.Conn) {
 }
 
 // testReadTimeout tests that Read timeouts do not affect Write.
-func testReadTimeout(t *testing.T, c net.Conn) {
+func TestReadTimeout(t *testing.T) {
+	ph := func(b []byte) []byte {
+		return b
+	}
+	c := NewMemoryConn(ph)
 	go chunkedCopy(ioutil.Discard, c)
 
 	c.SetReadDeadline(aLongTimeAgo)
@@ -200,7 +207,11 @@ func testReadTimeout(t *testing.T, c net.Conn) {
 }
 
 // testWriteTimeout tests that Write timeouts do not affect Read.
-func testWriteTimeout(t *testing.T, c net.Conn) {
+func testWriteTimeout(t *testing.T) {
+	ph := func(b []byte) []byte {
+		return b
+	}
+	c := NewMemoryConn(ph)
 	go chunkedCopy(c, rand.New(rand.NewSource(0)))
 
 	c.SetWriteDeadline(aLongTimeAgo)
@@ -213,7 +224,11 @@ func testWriteTimeout(t *testing.T, c net.Conn) {
 
 // testPastTimeout tests that a deadline set in the past immediately times out
 // Read and Write requests.
-func testPastTimeout(t *testing.T, c net.Conn) {
+func TestPastTimeout(t *testing.T) {
+	ph := func(b []byte) []byte {
+		return b
+	}
+	c := NewMemoryConn(ph)
 	go chunkedCopy(c, c)
 
 	testRoundtrip(t, c)
@@ -235,7 +250,11 @@ func testPastTimeout(t *testing.T, c net.Conn) {
 
 // testPresentTimeout tests that a past deadline set while there are pending
 // Read and Write operations immediately times out those operations.
-func testPresentTimeout(t *testing.T, c net.Conn) {
+func testPresentTimeout(t *testing.T) {
+	ph := func(b []byte) []byte {
+		return b
+	}
+	c := NewMemoryConn(ph)
 	var wg sync.WaitGroup
 	defer wg.Wait()
 	wg.Add(3)
@@ -274,7 +293,11 @@ func testPresentTimeout(t *testing.T, c net.Conn) {
 
 // testFutureTimeout tests that a future deadline will eventually time out
 // Read and Write operations.
-func testFutureTimeout(t *testing.T, c net.Conn) {
+func testFutureTimeout(t *testing.T) {
+	ph := func(b []byte) []byte {
+		return b
+	}
+	c := NewMemoryConn(ph)
 	var wg sync.WaitGroup
 	wg.Add(2)
 
@@ -301,7 +324,11 @@ func testFutureTimeout(t *testing.T, c net.Conn) {
 
 // testCloseTimeout tests that calling Close immediately times out pending
 // Read and Write operations.
-func testCloseTimeout(t *testing.T, c net.Conn) {
+func TestCloseTimeout(t *testing.T) {
+	ph := func(b []byte) []byte {
+		return b
+	}
+	c := NewMemoryConn(ph)
 	go chunkedCopy(c, c)
 
 	var wg sync.WaitGroup
@@ -335,7 +362,11 @@ func testCloseTimeout(t *testing.T, c net.Conn) {
 
 // testConcurrentMethods tests that the methods of net.Conn can safely
 // be called concurrently.
-func testConcurrentMethods(t *testing.T, c net.Conn) {
+func TestConcurrentMethods(t *testing.T) {
+	ph := func(b []byte) []byte {
+		return b
+	}
+	c := NewMemoryConn(ph)
 	if runtime.GOOS == "plan9" {
 		t.Skip("skipping on plan9; see https://golang.org/issue/20489")
 	}
@@ -398,6 +429,7 @@ func checkForTimeoutError(t *testing.T, err error) {
 // It assumes that everything written into c is echoed back to itself.
 func testRoundtrip(t *testing.T, c net.Conn) {
 	t.Helper()
+
 	if err := c.SetDeadline(neverTimeout); err != nil {
 		t.Errorf("roundtrip SetDeadline error: %v", err)
 	}
