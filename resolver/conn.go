@@ -216,15 +216,13 @@ func (l *MemoryConn) write(b []byte) (n int, err error) {
 	default:
 	}
 
-	go func() {
-		// serialize
-		l.wrMu.Lock()
-		defer l.wrMu.Unlock()
-		// avoid mutation of the input
-		c := make([]byte, len(b))
-		copy(c, b)
-		l.readCh <- l.PacketHandler(b)
-	}()
+	// serialize and ensure entirety of b is written together
+	l.wrMu.Lock()
+	defer l.wrMu.Unlock()
+	// avoid mutation of the input
+	c := make([]byte, len(b))
+	copy(c, b)
+	l.readCh <- l.PacketHandler(c)
 
 	return len(b), nil
 }
