@@ -10,6 +10,7 @@ import (
 	"time"
 )
 
+// packetHandlerFn defines the function used by the connection
 type packetHandlerFn func(b []byte) []byte
 
 // MemoryConn creates an in-memory network connection
@@ -28,10 +29,11 @@ type MemoryConn struct {
 	localAddr  net.Addr
 	remoteAddr net.Addr
 
-	// PacketHandler must be safe to call concurrently
+	wrMu          sync.Mutex // Serialize Write operations
 	PacketHandler packetHandlerFn
 }
 
+// implement PacketConn interface
 var _ net.PacketConn = &MemoryConn{}
 
 func NewMemoryConn(fn packetHandlerFn) *MemoryConn {
@@ -214,8 +216,13 @@ func (l *MemoryConn) write(b []byte) (n int, err error) {
 	default:
 	}
 
-	// TODO bound this and allow to timeout
 	go func() {
+		// serialize
+		l.wrMu.Lock()
+		defer l.wrMu.Unlock()
+		// avoid mutation of the input
+		c := make([]byte, len(b))
+		copy(c, b)
 		l.readCh <- l.PacketHandler(b)
 	}()
 
