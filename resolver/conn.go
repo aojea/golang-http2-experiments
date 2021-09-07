@@ -13,13 +13,13 @@ import (
 
 const maxPacketSize = 1024
 
-// packetHandlerFn set
+// packetHandlerFn signature for the function used to process the packets
 type packetHandlerFn func(b []byte) []byte
 
 // hairpin creates a synchronous, in-memory, packet network connection
 // implementing the Conn interface. Reads on the connection are matched
-// with writes. Packets are processed by the provided hook, if exist,
-// and copied directly; only one packet is buffered to avoid deadlocks.
+// with writes, and packets may be processed by the provided hook, if exist
+// or copied directly; only one packet is buffered to avoid deadlocks.
 type hairpin struct {
 	wrMu sync.Mutex // Serialize Write operations
 
@@ -34,8 +34,8 @@ type hairpin struct {
 	localAddr  net.Addr
 	remoteAddr net.Addr
 
-	// hook for processing packets
-	// nil means packet are copied directly
+	// hook for processing connections packets
+	// packet are copied directly if not set
 	packetHandler packetHandlerFn
 }
 
@@ -235,8 +235,7 @@ func (h *hairpin) write(b []byte) (n int, err error) {
 	}
 
 	// Copy the buffer and ensure entirety of b is written together
-	// the process handler will access the buffer so it can mutate
-	// the input.
+	// so the process handler does not mutate the input.
 	h.wrMu.Lock()
 	defer h.wrMu.Unlock()
 	packet := make([]byte, len(b))
@@ -280,13 +279,11 @@ func (l *hairpin) Close() error {
 
 // Dialer
 type HairpinDialer struct {
-	// PacketHandler must be safe to call concurrently
 	PacketHandler packetHandlerFn
 }
 
 // Dial creates an in memory connection that is processed by the packet handler
 func (h *HairpinDialer) Dial(ctx context.Context, network, address string) (net.Conn, error) {
-	// Hairpin implements net.Conn interface
 	conn := Hairpin(h.PacketHandler)
 	conn.SetRemoteAddr(hairpinAddress{
 		addr: address,
@@ -305,7 +302,6 @@ type HairpinListener struct {
 var _ net.Listener = &HairpinListener{}
 
 func (h *HairpinListener) Accept() (net.Conn, error) {
-	// Hairpin implements net.Conn interface
 	conn := Hairpin(h.PacketHandler)
 	conn.SetLocalAddr(hairpinAddress{
 		addr: h.address,
