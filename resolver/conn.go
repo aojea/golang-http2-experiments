@@ -19,7 +19,7 @@ type packetHandlerFn func(b []byte) []byte
 // hairpin creates a synchronous, in-memory, packet network connection
 // implementing the Conn interface. Reads on the connection are matched
 // with writes. Packets are processed by the provided hook, if exist,
-// and copied directly; there is no internal buffering.
+// and copied directly; only one packet is buffered to avoid deadlocks.
 type hairpin struct {
 	wrMu sync.Mutex // Serialize Write operations
 
@@ -183,13 +183,18 @@ func (h *hairpin) read(b []byte) (n int, err error) {
 
 	select {
 	case bw := <-h.readCh:
-		output := h.packetHandler(bw)
-		// nil means the server is closing the connection
-		if output == nil {
-			return 0, io.EOF
+		if h.packetHandler != nil {
+			output := h.packetHandler(bw)
+			// nil means the server is closing the connection
+			if output == nil {
+				return 0, io.EOF
+			}
+			nr := copy(b, output)
+			return nr, nil
 		}
-		nr := copy(b, output)
-		return nr, nil
+		// bw was copied on write
+		b = bw
+		return len(b), nil
 	case <-h.done:
 		return 0, io.EOF
 	case <-h.readDeadline.wait():
@@ -219,8 +224,6 @@ func (h *hairpin) write(b []byte) (n int, err error) {
 		return 0, io.ErrClosedPipe
 	case isClosedChan(h.writeDeadline.wait()):
 		return 0, os.ErrDeadlineExceeded
-	case h.packetHandler == nil:
-		return n, io.ErrClosedPipe
 	}
 
 	select {

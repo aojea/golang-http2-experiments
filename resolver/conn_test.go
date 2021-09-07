@@ -105,13 +105,10 @@ func TestPingPong(t *testing.T) {
 				break
 			}
 
-			// hairpin connection blocks writes on reads
-			// so it deadlocks if we write and don't read
-			go func() {
-				if _, err := c.Write(buf); err != nil {
-					t.Logf("unexpected Write error: %v", err)
-				}
-			}()
+			if _, err := c.Write(buf); err != nil {
+				t.Logf("unexpected Write error: %v", err)
+			}
+
 		}
 		if err := c.Close(); err != nil {
 			t.Errorf("unexpected Close error: %v", err)
@@ -130,10 +127,8 @@ func TestPingPong(t *testing.T) {
 // TestRacyRead tests that it is safe to mutate the input Read buffer
 // immediately after cancelation has occurred.
 func TestRacyRead(t *testing.T) {
-	ph := func(b []byte) []byte {
-		return b
-	}
-	c := Hairpin(ph)
+	c := Hairpin(nil)
+
 	go chunkedCopy(c, rand.New(rand.NewSource(0)))
 
 	var wg sync.WaitGroup
@@ -162,10 +157,8 @@ func TestRacyRead(t *testing.T) {
 // TestRacyWrite tests that it is safe to mutate the input Write buffer
 // immediately after cancelation has occurred.
 func TestRacyWrite(t *testing.T) {
-	ph := func(b []byte) []byte {
-		return b
-	}
-	c := Hairpin(ph)
+	c := Hairpin(nil)
+
 	go chunkedCopy(ioutil.Discard, c)
 
 	var wg sync.WaitGroup
@@ -193,10 +186,7 @@ func TestRacyWrite(t *testing.T) {
 
 // testReadTimeout tests that Read timeouts do not affect Write.
 func TestReadTimeout(t *testing.T) {
-	ph := func(b []byte) []byte {
-		return b
-	}
-	c := Hairpin(ph)
+	c := Hairpin(nil)
 	go chunkedCopy(ioutil.Discard, c)
 
 	c.SetReadDeadline(aLongTimeAgo)
@@ -209,10 +199,8 @@ func TestReadTimeout(t *testing.T) {
 
 // testWriteTimeout tests that Write timeouts do not affect Read.
 func testWriteTimeout(t *testing.T) {
-	ph := func(b []byte) []byte {
-		return b
-	}
-	c := Hairpin(ph)
+	c := Hairpin(nil)
+
 	go chunkedCopy(c, rand.New(rand.NewSource(0)))
 
 	c.SetWriteDeadline(aLongTimeAgo)
@@ -226,10 +214,8 @@ func testWriteTimeout(t *testing.T) {
 // testPastTimeout tests that a deadline set in the past immediately times out
 // Read and Write requests.
 func TestPastTimeout(t *testing.T) {
-	ph := func(b []byte) []byte {
-		return b
-	}
-	c := Hairpin(ph)
+	c := Hairpin(nil)
+
 	go chunkedCopy(c, c)
 
 	testRoundtrip(t, c)
@@ -252,10 +238,8 @@ func TestPastTimeout(t *testing.T) {
 // testPresentTimeout tests that a past deadline set while there are pending
 // Read and Write operations immediately times out those operations.
 func testPresentTimeout(t *testing.T) {
-	ph := func(b []byte) []byte {
-		return b
-	}
-	c := Hairpin(ph)
+	c := Hairpin(nil)
+
 	var wg sync.WaitGroup
 	defer wg.Wait()
 	wg.Add(3)
