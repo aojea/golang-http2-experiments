@@ -7,7 +7,7 @@ import (
 	"golang.org/x/net/dns/dnsmessage"
 )
 
-// ResolverStub process dns packets and executes the corresponding functions if set
+// ResolverStub process dns packets executing the corresponding functions overrides if set
 type ResolverStub struct {
 	LookupAddr  func(ctx context.Context, addr string) (names []string, err error)
 	LookupCNAME func(ctx context.Context, host string) (cname string, err error)
