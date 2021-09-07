@@ -32,7 +32,7 @@ func TestBasicIO(t *testing.T) {
 		}
 		return b
 	}
-	c := NewMemoryConn(ph)
+	c := Hairpin(ph)
 	want := make([]byte, 1<<20)
 	rand.New(rand.NewSource(0)).Read(want)
 	dataCh := make(chan []byte)
@@ -54,12 +54,6 @@ func TestBasicIO(t *testing.T) {
 		dataCh <- wr.Bytes()
 	}()
 
-	// TODO: wait until all data is processed
-	// closing the connection close the reader too
-	time.Sleep(1 * time.Second)
-	if err := c.Close(); err != nil {
-		t.Errorf("unexpected c.Close error: %v", err)
-	}
 	if got := <-dataCh; !bytes.Equal(got, want) {
 		t.Error("transmitted data differs")
 	}
@@ -79,7 +73,7 @@ func TestPingPong(t *testing.T) {
 		prev = v
 		return buf
 	}
-	c := NewMemoryConn(ph)
+	c := Hairpin(ph)
 
 	var wg sync.WaitGroup
 	defer wg.Wait()
@@ -132,7 +126,7 @@ func TestRacyRead(t *testing.T) {
 	ph := func(b []byte) []byte {
 		return b
 	}
-	c := NewMemoryConn(ph)
+	c := Hairpin(ph)
 	go chunkedCopy(c, rand.New(rand.NewSource(0)))
 
 	var wg sync.WaitGroup
@@ -164,7 +158,7 @@ func TestRacyWrite(t *testing.T) {
 	ph := func(b []byte) []byte {
 		return b
 	}
-	c := NewMemoryConn(ph)
+	c := Hairpin(ph)
 	go chunkedCopy(ioutil.Discard, c)
 
 	var wg sync.WaitGroup
@@ -195,7 +189,7 @@ func TestReadTimeout(t *testing.T) {
 	ph := func(b []byte) []byte {
 		return b
 	}
-	c := NewMemoryConn(ph)
+	c := Hairpin(ph)
 	go chunkedCopy(ioutil.Discard, c)
 
 	c.SetReadDeadline(aLongTimeAgo)
@@ -211,7 +205,7 @@ func testWriteTimeout(t *testing.T) {
 	ph := func(b []byte) []byte {
 		return b
 	}
-	c := NewMemoryConn(ph)
+	c := Hairpin(ph)
 	go chunkedCopy(c, rand.New(rand.NewSource(0)))
 
 	c.SetWriteDeadline(aLongTimeAgo)
@@ -228,7 +222,7 @@ func TestPastTimeout(t *testing.T) {
 	ph := func(b []byte) []byte {
 		return b
 	}
-	c := NewMemoryConn(ph)
+	c := Hairpin(ph)
 	go chunkedCopy(c, c)
 
 	testRoundtrip(t, c)
@@ -254,7 +248,7 @@ func testPresentTimeout(t *testing.T) {
 	ph := func(b []byte) []byte {
 		return b
 	}
-	c := NewMemoryConn(ph)
+	c := Hairpin(ph)
 	var wg sync.WaitGroup
 	defer wg.Wait()
 	wg.Add(3)
@@ -297,7 +291,7 @@ func testFutureTimeout(t *testing.T) {
 	ph := func(b []byte) []byte {
 		return b
 	}
-	c := NewMemoryConn(ph)
+	c := Hairpin(ph)
 	var wg sync.WaitGroup
 	wg.Add(2)
 
@@ -328,7 +322,7 @@ func TestCloseTimeout(t *testing.T) {
 	ph := func(b []byte) []byte {
 		return b
 	}
-	c := NewMemoryConn(ph)
+	c := Hairpin(ph)
 	go chunkedCopy(c, c)
 
 	var wg sync.WaitGroup
@@ -366,7 +360,7 @@ func TestConcurrentMethods(t *testing.T) {
 	ph := func(b []byte) []byte {
 		return b
 	}
-	c := NewMemoryConn(ph)
+	c := Hairpin(ph)
 	if runtime.GOOS == "plan9" {
 		t.Skip("skipping on plan9; see https://golang.org/issue/20489")
 	}

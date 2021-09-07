@@ -7,19 +7,20 @@ import (
 	"net"
 	"os"
 	"sync"
+	"syscall"
 	"time"
 )
 
-const maxPacket = 1024
+const maxPacketSize = 1024
 
-// packetHandlerFn defines the function used by the connection
+// packetHandlerFn set
 type packetHandlerFn func(b []byte) []byte
 
-// MemoryConn creates an in-memory network connection
-// Writes are sent to a custom function that process
-// the packets.
-// Reads read the output of the custom function.
-type MemoryConn struct {
+// hairpin creates a synchronous, in-memory, packet network connection
+// implementing the Conn interface. Reads on the connection are matched
+// with writes. Packets are processed by the provided hook, if exist,
+// and copied directly; there is no internal buffering.
+type hairpin struct {
 	readCh chan []byte
 
 	once sync.Once
@@ -31,20 +32,20 @@ type MemoryConn struct {
 	localAddr  net.Addr
 	remoteAddr net.Addr
 
-	wrMu          sync.Mutex // Serialize Write operations
-	PacketHandler packetHandlerFn
+	// hook for packet processing
+	packetHandler packetHandlerFn
 }
 
 // implement PacketConn interface
-var _ net.PacketConn = &MemoryConn{}
+var _ net.PacketConn = &hairpin{}
 
-func NewMemoryConn(fn packetHandlerFn) *MemoryConn {
-	return &MemoryConn{
-		readCh:        make(chan []byte, maxPacket),
+func Hairpin(fn packetHandlerFn) *hairpin {
+	return &hairpin{
+		readCh:        make(chan []byte),
 		done:          make(chan struct{}),
 		readDeadline:  makeConnDeadline(),
 		writeDeadline: makeConnDeadline(),
-		PacketHandler: fn,
+		packetHandler: fn,
 	}
 
 }
@@ -120,193 +121,185 @@ func isClosedChan(c <-chan struct{}) bool {
 	}
 }
 
-type MemoryConnAddress struct {
+type hairpinAddress struct {
 	addr string
 }
 
-func (m MemoryConnAddress) Network() string {
-	if m.addr != "" {
-		return m.addr
+func (h hairpinAddress) Network() string {
+	if h.addr != "" {
+		return h.addr
 	}
-	return "MemoryConn"
+	return "Hairpin"
 }
-func (m MemoryConnAddress) String() string {
-	if m.addr != "" {
-		return m.addr
+func (h hairpinAddress) String() string {
+	if h.addr != "" {
+		return h.addr
 	}
-	return "MemoryConn"
+	return "Hairpin"
 }
 
-func (l *MemoryConn) SetLocalAddr(addr net.Addr) {
-	l.localAddr = addr
+func (h *hairpin) SetLocalAddr(addr net.Addr) {
+	h.localAddr = addr
 }
-func (l *MemoryConn) SetRemoteAddr(addr net.Addr) {
-	l.remoteAddr = addr
-}
-
-func (l *MemoryConn) LocalAddr() net.Addr {
-	if l.localAddr != nil {
-		return l.localAddr
-	}
-	return MemoryConnAddress{}
-}
-func (l *MemoryConn) RemoteAddr() net.Addr {
-	if l.remoteAddr != nil {
-		return l.remoteAddr
-	}
-	return MemoryConnAddress{}
+func (h *hairpin) SetRemoteAddr(addr net.Addr) {
+	h.remoteAddr = addr
 }
 
-func (l *MemoryConn) Read(b []byte) (int, error) {
-	n, _, err := l.ReadFrom(b)
+func (h *hairpin) LocalAddr() net.Addr {
+	if h.localAddr != nil {
+		return h.localAddr
+	}
+	return hairpinAddress{}
+}
+func (h *hairpin) RemoteAddr() net.Addr {
+	if h.remoteAddr != nil {
+		return h.remoteAddr
+	}
+	return hairpinAddress{}
+}
+
+func (h *hairpin) Read(b []byte) (int, error) {
+	n, _, err := h.ReadFrom(b)
 	return n, err
 }
-func (l *MemoryConn) ReadFrom(b []byte) (int, net.Addr, error) {
-	n, err := l.read(b)
+func (h *hairpin) ReadFrom(b []byte) (int, net.Addr, error) {
+	n, err := h.read(b)
 	if err != nil && err != io.EOF && err != io.ErrClosedPipe {
-		err = &net.OpError{Op: "read", Net: "MemoryConn", Err: err}
+		err = &net.OpError{Op: "read", Net: "Hairpin", Err: err}
 	}
-	return n, MemoryConnAddress{}, err
+	return n, hairpinAddress{}, err
 }
 
-func (l *MemoryConn) read(b []byte) (n int, err error) {
+func (h *hairpin) read(b []byte) (n int, err error) {
 	switch {
-	case isClosedChan(l.done):
+	case isClosedChan(h.done):
 		return 0, io.ErrClosedPipe
-	case isClosedChan(l.readDeadline.wait()):
+	case isClosedChan(h.readDeadline.wait()):
 		return 0, os.ErrDeadlineExceeded
 	}
 
 	select {
-	case bw, ok := <-l.readCh:
-		if !ok {
+	case bw := <-h.readCh:
+		output := h.packetHandler(bw)
+		// nil means the server is closing the connection
+		if output == nil {
 			return 0, io.EOF
 		}
-		nr := copy(b, bw)
+		nr := copy(b, output)
 		return nr, nil
-	case <-l.done:
+	case <-h.done:
 		return 0, io.EOF
-	case <-l.readDeadline.wait():
+	case <-h.readDeadline.wait():
 		return 0, os.ErrDeadlineExceeded
 	}
 }
 
-func (l *MemoryConn) Write(b []byte) (int, error) {
-	return l.WriteTo(b, MemoryConnAddress{})
+func (h *hairpin) Write(b []byte) (int, error) {
+	return h.WriteTo(b, hairpinAddress{})
 }
 
-func (l *MemoryConn) WriteTo(b []byte, _ net.Addr) (int, error) {
-	n, err := l.write(b)
+func (h *hairpin) WriteTo(b []byte, _ net.Addr) (int, error) {
+	n, err := h.write(b)
 	if err != nil && err != io.ErrClosedPipe {
-		err = &net.OpError{Op: "write", Net: "MemoryConn", Err: err}
+		err = &net.OpError{Op: "write", Net: "Hairpin", Err: err}
 	}
 	return n, err
 }
 
-func (l *MemoryConn) write(b []byte) (n int, err error) {
-	if len(b) > maxPacket {
-		return 0, io.ErrShortWrite
+func (h *hairpin) write(b []byte) (n int, err error) {
+	if len(b) > maxPacketSize {
+		return 0, syscall.EMSGSIZE
 	}
+
 	switch {
-	case isClosedChan(l.done):
+	case isClosedChan(h.done):
 		return 0, io.ErrClosedPipe
-	case isClosedChan(l.writeDeadline.wait()):
+	case isClosedChan(h.writeDeadline.wait()):
 		return 0, os.ErrDeadlineExceeded
-	case l.PacketHandler == nil:
+	case h.packetHandler == nil:
 		return n, io.ErrClosedPipe
 	}
 
 	select {
-	case <-l.done:
+	case <-h.done:
 		return n, io.ErrClosedPipe
-	case <-l.writeDeadline.wait():
+	case <-h.writeDeadline.wait():
 		return n, os.ErrDeadlineExceeded
 	default:
 	}
 
-	// serialize and ensure entirety of b is written together
-	l.wrMu.Lock()
-	defer l.wrMu.Unlock()
-	// avoid mutation of the input
-	c := make([]byte, len(b))
-	copy(c, b)
-	d := l.PacketHandler(c)
-	if len(d) > maxPacket {
-		return 0, io.ErrShortWrite
-	}
-	l.readCh <- d
-
+	h.readCh <- b
 	return len(b), nil
 }
 
-func (l *MemoryConn) SetDeadline(t time.Time) error {
-	if isClosedChan(l.done) {
+func (h *hairpin) SetDeadline(t time.Time) error {
+	if isClosedChan(h.done) {
 		return io.ErrClosedPipe
 	}
-	l.readDeadline.set(t)
-	l.writeDeadline.set(t)
+	h.readDeadline.set(t)
+	h.writeDeadline.set(t)
 	return nil
 }
 
-func (l *MemoryConn) SetReadDeadline(t time.Time) error {
-	if isClosedChan(l.done) {
+func (h *hairpin) SetReadDeadline(t time.Time) error {
+	if isClosedChan(h.done) {
 		return io.ErrClosedPipe
 	}
-	l.readDeadline.set(t)
+	h.readDeadline.set(t)
 	return nil
 }
 
-func (l *MemoryConn) SetWriteDeadline(t time.Time) error {
-	if isClosedChan(l.done) {
+func (h *hairpin) SetWriteDeadline(t time.Time) error {
+	if isClosedChan(h.done) {
 		return io.ErrClosedPipe
 	}
-	l.writeDeadline.set(t)
+	h.writeDeadline.set(t)
 	return nil
 }
 
-func (l *MemoryConn) Close() error {
+func (l *hairpin) Close() error {
 	l.once.Do(func() { close(l.done) })
 	return nil
 }
 
 // Dialer
-type MemoryDialer struct {
+type HairpinDialer struct {
 	// PacketHandler must be safe to call concurrently
 	PacketHandler packetHandlerFn
 }
 
 // Dial creates an in memory connection that is processed by the packet handler
-func (m *MemoryDialer) Dial(ctx context.Context, network, address string) (net.Conn, error) {
-	// MemoryConn implements net.Conn interface
-	conn := NewMemoryConn(m.PacketHandler)
-	conn.SetRemoteAddr(MemoryConnAddress{
+func (h *HairpinDialer) Dial(ctx context.Context, network, address string) (net.Conn, error) {
+	// Hairpin implements net.Conn interface
+	conn := Hairpin(h.PacketHandler)
+	conn.SetRemoteAddr(hairpinAddress{
 		addr: address,
 	})
 	return conn, nil
 }
 
 // Listener
-type MemoryListener struct {
+type HairpinListener struct {
 	connPool []net.Conn
 	address  string
 
 	PacketHandler packetHandlerFn
 }
 
-var _ net.Listener = &MemoryListener{}
+var _ net.Listener = &HairpinListener{}
 
-func (m *MemoryListener) Accept() (net.Conn, error) {
-	// MemoryConn implements net.Conn interface
-	conn := NewMemoryConn(m.PacketHandler)
-	conn.SetLocalAddr(MemoryConnAddress{
-		addr: m.address,
+func (h *HairpinListener) Accept() (net.Conn, error) {
+	// Hairpin implements net.Conn interface
+	conn := Hairpin(h.PacketHandler)
+	conn.SetLocalAddr(hairpinAddress{
+		addr: h.address,
 	})
 	return conn, nil
 }
 
-func (m *MemoryListener) Close() error {
+func (h *HairpinListener) Close() error {
 	var aggError error
-	for _, c := range m.connPool {
+	for _, c := range h.connPool {
 		if err := c.Close(); err != nil {
 			aggError = fmt.Errorf("%w", err)
 		}
@@ -314,13 +307,13 @@ func (m *MemoryListener) Close() error {
 	return aggError
 }
 
-func (m *MemoryListener) Addr() net.Addr {
-	return MemoryConnAddress{
-		addr: m.address,
+func (h *HairpinListener) Addr() net.Addr {
+	return hairpinAddress{
+		addr: h.address,
 	}
 }
 
-func (m *MemoryListener) Listen(network, address string) (net.Listener, error) {
-	m.address = address
-	return m, nil
+func (h *HairpinListener) Listen(network, address string) (net.Listener, error) {
+	h.address = address
+	return h, nil
 }

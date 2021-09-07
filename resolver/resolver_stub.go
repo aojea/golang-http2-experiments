@@ -26,7 +26,7 @@ func NewInMemoryResolver(d *ResolverStub) *net.Resolver {
 	if d == nil {
 		return net.DefaultResolver
 	}
-	localDNSDialer := &MemoryDialer{
+	localDNSDialer := &HairpinDialer{
 		PacketHandler: d.ProcessDNSRequest,
 	}
 
