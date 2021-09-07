@@ -44,7 +44,7 @@ var _ net.PacketConn = &hairpin{}
 
 func Hairpin(fn packetHandlerFn) *hairpin {
 	return &hairpin{
-		readCh:        make(chan []byte),
+		readCh:        make(chan []byte, maxPacketSize),
 		done:          make(chan struct{}),
 		readDeadline:  makeConnDeadline(),
 		writeDeadline: makeConnDeadline(),
