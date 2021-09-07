@@ -2,7 +2,6 @@ package resolver
 
 import (
 	"context"
-	"fmt"
 	"net"
 
 	"golang.org/x/net/dns/dnsmessage"
@@ -19,21 +18,6 @@ type ResolverStub struct {
 	LookupPort  func(ctx context.Context, network, service string) (port int, err error)
 	LookupSRV   func(ctx context.Context, service, proto, name string) (cname string, addrs []*net.SRV, err error)
 	LookupTXT   func(ctx context.Context, name string) ([]string, error)
-}
-
-// NewInMemoryResolver receives a ResolverStub object with the override functions
-func NewInMemoryResolver(d *ResolverStub) *net.Resolver {
-	if d == nil {
-		return net.DefaultResolver
-	}
-	localDNSDialer := &HairpinDialer{
-		PacketHandler: d.ProcessDNSRequest,
-	}
-
-	return &net.Resolver{
-		PreferGo: true,
-		Dial:     localDNSDialer.Dial,
-	}
 }
 
 // ProcessDNSRequest is used by the MemoryConn to process the packets
@@ -61,9 +45,8 @@ func (r *ResolverStub) ProcessDNSRequest(b []byte) []byte {
 		return dnsErrorMessage(dnsmessage.RCodeFormatError)
 	}
 	q := questions[0]
-	fmt.Println("DEBUG RCV DNS q", q)
 
-	// Create the answer
+	// Create the answer restricted to 512 bytes (Section 4.2.1 RFC 1035)
 	buf := make([]byte, 2, 514)
 	answer := dnsmessage.NewBuilder(buf,
 		dnsmessage.Header{
@@ -181,6 +164,7 @@ func (r *ResolverStub) ProcessDNSRequest(b []byte) []byte {
 	if err != nil {
 		return dnsErrorMessage(dnsmessage.RCodeServerFailure)
 	}
+	// omit first 2 byes
 	return buf[2:]
 }
 
@@ -198,4 +182,20 @@ func dnsErrorMessage(rcode dnsmessage.RCode) []byte {
 		panic(err)
 	}
 	return buf
+}
+
+// NewInMemoryResolver receives a ResolverStub object with the override functions
+// and returns a resolver that can be used as custom Resolver implementation
+func NewInMemoryResolver(d *ResolverStub) *net.Resolver {
+	if d == nil {
+		return net.DefaultResolver
+	}
+	localDNSDialer := &HairpinDialer{
+		PacketHandler: d.ProcessDNSRequest,
+	}
+
+	return &net.Resolver{
+		PreferGo: true,
+		Dial:     localDNSDialer.Dial,
+	}
 }
