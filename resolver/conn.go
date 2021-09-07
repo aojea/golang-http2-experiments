@@ -21,9 +21,11 @@ type packetHandlerFn func(b []byte) []byte
 // with writes. Packets are processed by the provided hook, if exist,
 // and copied directly; there is no internal buffering.
 type hairpin struct {
-	readCh chan []byte
+	wrMu sync.Mutex // Serialize Write operations
 
-	once sync.Once
+	readCh chan []byte // Used to communicate Write and Read
+
+	once sync.Once // Protects closing the connection
 	done chan struct{}
 
 	readDeadline  connDeadline
@@ -32,7 +34,8 @@ type hairpin struct {
 	localAddr  net.Addr
 	remoteAddr net.Addr
 
-	// hook for packet processing
+	// hook for processing packets
+	// nil means packet are copied directly
 	packetHandler packetHandlerFn
 }
 
@@ -228,7 +231,17 @@ func (h *hairpin) write(b []byte) (n int, err error) {
 	default:
 	}
 
-	h.readCh <- b
+	// Copy the buffer and ensure entirety of b is written together
+	// the process handler will access the buffer so it can mutate
+	// the input.
+	h.wrMu.Lock()
+	defer h.wrMu.Unlock()
+	packet := make([]byte, len(b))
+	nr := copy(packet, b)
+	h.readCh <- packet
+	if nr != len(b) {
+		return nr, io.ErrShortWrite
+	}
 	return len(b), nil
 }
 

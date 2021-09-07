@@ -25,9 +25,8 @@ var (
 
 // TestBasicIO tests that the data sent on c is properly received back on c.
 func TestBasicIO(t *testing.T) {
-	finish := false
 	ph := func(b []byte) []byte {
-		if finish {
+		if bytes.Equal(b, []byte{0x00}) {
 			return nil
 		}
 		return b
@@ -42,7 +41,9 @@ func TestBasicIO(t *testing.T) {
 		if err := chunkedCopy(c, rd); err != nil {
 			t.Errorf("unexpected buffer Write error: %v", err)
 		}
-		finish = true
+		// we can't close the connection directly until the reader has finished
+		// so we indicate the server to close it after he has processed all the packets
+		c.Write([]byte{0x00})
 	}()
 
 	go func() {
@@ -55,7 +56,7 @@ func TestBasicIO(t *testing.T) {
 	}()
 
 	if got := <-dataCh; !bytes.Equal(got, want) {
-		t.Error("transmitted data differs")
+		t.Errorf("transmitted data differs, got: %d bytes want: %d bytes", len(got), len(want))
 	}
 
 }
