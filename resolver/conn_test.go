@@ -72,6 +72,10 @@ func TestPingPong(t *testing.T) {
 			t.Errorf("mismatching value: got %d, want %d", v, prev+2)
 		}
 		prev = v
+		// stop processing once we get 1000 pings
+		if v == 1000 {
+			return nil
+		}
 		return buf
 	}
 	c := Hairpin(ph)
@@ -97,15 +101,17 @@ func TestPingPong(t *testing.T) {
 				t.Errorf("mismatching value: got %d, want %d", v, prev+2)
 			}
 			prev = v
-
 			if v == 1001 {
 				break
 			}
 
-			if _, err := c.Write(buf); err != nil {
-				t.Errorf("unexpected Write error: %v", err)
-				break
-			}
+			// hairpin connection blocks writes on reads
+			// so it deadlocks if we write and don't read
+			go func() {
+				if _, err := c.Write(buf); err != nil {
+					t.Logf("unexpected Write error: %v", err)
+				}
+			}()
 		}
 		if err := c.Close(); err != nil {
 			t.Errorf("unexpected Close error: %v", err)
