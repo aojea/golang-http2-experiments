@@ -130,36 +130,40 @@ func (r *ResolverStub) ProcessDNSRequest(b []byte) []byte {
 		if r.LookupNS == nil {
 			return dnsErrorMessage(dnsmessage.RCodeNotImplemented)
 		}
+		// TODO
 	case dnsmessage.TypeCNAME:
 		if r.LookupCNAME == nil {
 			return dnsErrorMessage(dnsmessage.RCodeNotImplemented)
 		}
+		// TODO
 	case dnsmessage.TypeSOA:
 		return dnsErrorMessage(dnsmessage.RCodeNotImplemented)
 	case dnsmessage.TypePTR:
 		if r.LookupAddr == nil {
 			return dnsErrorMessage(dnsmessage.RCodeNotImplemented)
 		}
+		// TODO
 	case dnsmessage.TypeMX:
 		if r.LookupMX == nil {
 			return dnsErrorMessage(dnsmessage.RCodeNotImplemented)
 		}
+		// TODO
 	case dnsmessage.TypeTXT:
 		if r.LookupTXT == nil {
 			return dnsErrorMessage(dnsmessage.RCodeNotImplemented)
 		}
+		// TODO
 	case dnsmessage.TypeSRV:
 		if r.LookupSRV == nil {
 			return dnsErrorMessage(dnsmessage.RCodeNotImplemented)
 		}
+		// TODO
 	case dnsmessage.TypeOPT:
 		return dnsErrorMessage(dnsmessage.RCodeNotImplemented)
 	default:
 		return dnsErrorMessage(dnsmessage.RCodeNotImplemented)
 	}
-	if err != nil {
-		// return dns error
-	}
+
 	buf, err = answer.Finish()
 	if err != nil {
 		return dnsErrorMessage(dnsmessage.RCodeServerFailure)

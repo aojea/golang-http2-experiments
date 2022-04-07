@@ -22,6 +22,7 @@ func main() {
 	backend.StartTLS()
 	defer backend.Close()
 	log.Println("backend url", backend.URL)
+
 	time.Sleep(1 * time.Second)
 	// proxy server forwards to backend
 	proxyServer := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -49,9 +50,9 @@ func main() {
 		}
 		defer conn.Close()
 		// copy request body to next request body
-		go io.Copy(conn, r.Body)
-		// copy response body to the writer
-		io.Copy(flushWriter{w}, conn)
+		go io.Copy(flushWriter{w}, conn)
+		io.Copy(conn, r.Body)
+
 		log.Printf("proxy server closed %s ", u.Host)
 
 	}))
@@ -73,10 +74,11 @@ func main() {
 		}
 
 		pr, pw := io.Pipe()
+		defer pw.Close()
 		client := proxyServer.Client()
 		url := proxyServer.URL + "?host=" + host
 		log.Printf("proxy client: send req %s ", url)
-		req, err := http.NewRequest("PUT", url, ioutil.NopCloser(pr))
+		req, err := http.NewRequest("PUT", url, pr)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -84,6 +86,7 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
+		defer res.Body.Close()
 		// copy request body to next request body
 		go io.Copy(pw, r.Body)
 		// copy response body to the writer
@@ -102,7 +105,7 @@ func main() {
 		pr, pw := io.Pipe()
 		client := proxyClient.Client()
 		url := proxyClient.URL + "?host=" + backend.URL
-		req, err := http.NewRequest("PUT", url, ioutil.NopCloser(pr))
+		req, err := http.NewRequest("PUT", url, pr)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -130,7 +133,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Request Failed: %s", err)
 	}
-	defer resp.Body.Close()
+
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		log.Fatalf("Reading body failed: %s", err)
@@ -138,6 +141,9 @@ func main() {
 	// Log the request body
 	bodyString := string(body)
 	log.Print(bodyString)
+	resp.Body.Close()
+	tr.CloseIdleConnections()
+	backend.Close()
 
 }
 
@@ -172,6 +178,7 @@ func (c *conn) Read(data []byte) (int, error) {
 
 // Close closes the connection
 func (c *conn) Close() error {
+	c.r.Close()
 	return c.wc.Close()
 }
 
