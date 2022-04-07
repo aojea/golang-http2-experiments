@@ -133,7 +133,7 @@ func server() {
 	defer dialer.Close()
 
 	mux := http.NewServeMux()
-	mux.Handle("/", http.HandlerFunc(dialer.ProxyRequestHandler()))
+	mux.Handle("/", http.HandlerFunc(dialer.ProxyRequestHandler("revdial1")))
 	mux.Handle("/revdial", dialer)
 
 	// Create a server on port 8000

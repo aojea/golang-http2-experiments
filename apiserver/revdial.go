@@ -23,7 +23,6 @@ import (
 	"log"
 	"net"
 	"net/http"
-	"net/url"
 	"sync"
 	"time"
 )
@@ -138,18 +137,20 @@ func (d *Dialer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	log.Printf("Conn from %s done", r.RemoteAddr)
 }
 
-func (d *Dialer) ProxyRequestHandler() func(http.ResponseWriter, *http.Request) {
+func (d *Dialer) ProxyRequestHandler(id string) func(http.ResponseWriter, *http.Request) {
 	tr := http.DefaultTransport.(*http.Transport)
 	tr.DialContext = d.Dial
 	client := http.Client{}
 	client.Transport = tr
 	return func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("proxy req %s from %s", r.RequestURI, r.RemoteAddr)
+		log.Printf("proxy req %+v from %s", r, r.RemoteAddr)
 		req := &http.Request{}
-		req.URL = &url.URL{}
-		req.URL.Path = r.URL.Path
-		req.URL.Host = "revdial1"
+		req.URL = r.URL
+		req.URL.Host = id
 		req.URL.Scheme = "http"
+		req.Header = r.Header
+		log.Printf("proxy req %+v", req)
+
 		res, err := client.Do(req)
 		if err != nil {
 			log.Fatal(err)
@@ -157,8 +158,8 @@ func (d *Dialer) ProxyRequestHandler() func(http.ResponseWriter, *http.Request) 
 		defer res.Body.Close()
 		// copy request body to next request body
 		// copy response body to the writer
-		io.Copy(flushWriter{w}, res.Body)
-		log.Printf("proxy server closed %s ", "")
+		_, err = io.Copy(flushWriter{w}, res.Body)
+		log.Printf("proxy server closed %v ", err)
 	}
 }
 
